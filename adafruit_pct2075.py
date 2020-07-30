@@ -25,7 +25,6 @@
 
 CircuitPython library for the NXP PCT2075 Digital Temperature Sensor
 
-
 * Author(s): Bryan Siepert
 
 Implementation Notes
@@ -39,25 +38,24 @@ Implementation Notes
 
 * Adafruit CircuitPython firmware for the supported boards:
   https://github.com/adafruit/circuitpython/releases
-
-
-
 * Adafruit's Bus Device library: https://github.com/adafruit/Adafruit_CircuitPython_BusDevice
 * Adafruit's Register library: https://github.com/adafruit/Adafruit_CircuitPython_Register
 """
 
 from adafruit_register.i2c_struct import ROUnaryStruct, UnaryStruct
 from adafruit_register.i2c_bits import RWBits
-from adafruit_register.i2c_bit import RWBit
+from adafruit_register.i2c_bit import RWBit, ROBit
 import adafruit_bus_device.i2c_device as i2cdevice
 
 __version__ = "0.0.0-auto.0"
 __repo__ = "https://github.com/adafruit/Adafruit_CircuitPython_PCT2075.git"
 # pylint: disable=bad-whitespace, too-few-public-methods
 PCT2075_DEFAULT_ADDRESS = 0x37  # Address is configured with pins A0-A2
+TC74_TO220_DEFAULT_ADDRESS = 0x48
 
-PCT2075_REGISTER_TEMP = 0  # Temperature register (read-only)
-PCT2075_REGISTER_CONFIG = 1  # Configuration register
+REGISTER_TEMPERATURE = 0  # Temperature register (read-only)
+REGISTER_CONFIG = 1  # Configuration register
+
 PCT2075_REGISTER_THYST = 2  # Hysterisis register
 PCT2075_REGISTER_TOS = 3  # OS register
 PCT2075_REGISTER_TIDLE = 4  # Measurement idle time register
@@ -82,40 +80,58 @@ class FaultCount:
 # pylint: enable=bad-whitespace, too-few-public-methods
 
 
-class PCT2075:
+class _AbstractSensor:
+    """Generalized temperature sensor driver superclass.
+        :param ~busio.I2C i2c_bus: The I2C bus the sensor is connected to.
+        :param address: The I2C device address for the sensor.
+    """
+
+    def __init__(self, i2c_bus, address, temp_register_format,
+                 temp_right_shift, temp_scale):
+        self.i2c_device = i2cdevice.I2CDevice(i2c_bus, address)
+        self._temperature = ROUnaryStruct(REGISTER_TEMPERATURE, temp_register_format)
+        self._temp_right_shift = temp_right_shift
+        self._temp_scale = temp_scale
+        self.TEMPERATURE_RESOLUTION_IN_C = temp_scale
+
+    shutdown = RWBit(REGISTER_CONFIG, 0, 1)
+    """Set to True to turn off the temperature measurement circuitry in the sensor. While shut down
+    the configurations properties can still be read or written but the temperature will not be
+    measured"""
+
+    @property
+    def temperature(self):
+        """Returns the current temperature in degrees celsius."""
+        return (self._temperature >> self._temp_right_shift) * self._temp_scale
+
+
+class PCT2075(_AbstractSensor):
     """Driver for the PCT2075 Digital Temperature Sensor and Thermal Watchdog.
         :param ~busio.I2C i2c_bus: The I2C bus the PCT2075 is connected to.
         :param address: The I2C device address for the sensor. Default is ``0x37``.
     """
-
     def __init__(self, i2c_bus, address=PCT2075_DEFAULT_ADDRESS):
-        self.i2c_device = i2cdevice.I2CDevice(i2c_bus, address)
+        super().__init__(i2c_bus, address, ">h", 5, 0.125)
 
-    _temperature = ROUnaryStruct(PCT2075_REGISTER_TEMP, ">h")
-    mode = RWBit(PCT2075_REGISTER_CONFIG, 1, register_width=1)
-    """Sets the alert mode. In comparitor mode, the sensor acts like a thermostat and will activate
-    the INT pin according to `high_temp_active_high` when an alert is triggered. The INT pin will be
-    deactiveated when the temperature falls below `temperature_hysteresis`. In interrupt mode the
-    INT pin is activated once when a temperature fault is detected, and once more when the
-    temperature falls below `temperature_hysteresis`. In interrupt mode, the alert is cleared by
-    reading a property"""
-
-    shutdown = RWBit(PCT2075_REGISTER_CONFIG, 0, 1)
-    """Set to True to turn off the temperature measurement circuitry in the sensor. While shut down
-    the configurations properties can still be read or written but the temperature will not be
-    measured"""
-    _fault_queue_length = RWBits(2, PCT2075_REGISTER_CONFIG, 3, register_width=1)
     _high_temperature_threshold = UnaryStruct(PCT2075_REGISTER_TOS, ">h")
-    _temp_hysteresis = UnaryStruct(PCT2075_REGISTER_THYST, ">h")
+
+    mode = RWBit(REGISTER_CONFIG, 1, register_width=1)
+    """Sets the alert mode. In comparator mode, the sensor acts like a
+    thermostat and will activate the INT pin according to
+    `high_temp_active_high` when an alert is triggered. The INT pin will
+    be deactivated when the temperature falls below
+    `temperature_hysteresis`. In interrupt mode the INT pin is activated
+    once when a temperature fault is detected, and once more when the
+    temperature falls below `temperature_hysteresis`. In interrupt
+    mode, the alert is cleared by reading a property"""
+
+    _fault_queue_length = RWBits(2, REGISTER_CONFIG, 3, register_width=1)
     _idle_time = RWBits(5, PCT2075_REGISTER_TIDLE, 0, register_width=1)
-    high_temp_active_high = RWBit(PCT2075_REGISTER_CONFIG, 2, register_width=1)
+
+    _temp_hysteresis = UnaryStruct(PCT2075_REGISTER_THYST, ">h")
+    high_temp_active_high = RWBit(REGISTER_CONFIG, 2, register_width=1)
     """Sets the alert polarity. When False the INT pin will be tied to ground when an alert is
     triggered. If set to True it will be disconnected from ground when an alert is triggered."""
-
-    @property
-    def temperature(self):
-        """Returns the current temperature in degress celsius. Resolution is 0.125 degrees C"""
-        return (self._temperature >> 5) * 0.125
 
     @property
     def high_temperature_threshold(self):
@@ -150,7 +166,6 @@ class PCT2075:
         `high_temperature_threshold`. The rate at which the sensor measures the temperature
         is defined by `delay_between_measurements`.
         """
-
         return self._fault_queue_length
 
     @faults_to_alert.setter
@@ -173,3 +188,17 @@ class PCT2075:
             and a multiple of 100"""
             )
         self._idle_time = int(value / 100)
+
+
+class TC74(_AbstractSensor):
+    """Driver for the TC74 Digital Temperature Sensor.
+        :param ~busio.I2C i2c_bus: The I2C bus the TC74 is connected to.
+        :param address: The I2C device address for the sensor. Default is ``0x48``.
+    """
+    def __init__(self, i2c_bus, address=PCT2075_DEFAULT_ADDRESS):
+        super().__init__(i2c_bus, address, ">h", 0, 1)
+
+    data_ready = ROBit(REGISTER_CONFIG, 0, 1)
+    """Set to True to turn off the temperature measurement circuitry in the sensor. While shut down
+    the configurations properties can still be read or written but the temperature will not be
+    measured"""
