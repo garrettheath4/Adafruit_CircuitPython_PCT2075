@@ -1,6 +1,7 @@
 *.mpy
 .idea
 __pycache__
+.mypy_cache
 _build
 *.pyc
 .env
@@ -10,3 +11,4 @@ bundles
 dist
 **/*.egg-info
 .vscode
+*~
