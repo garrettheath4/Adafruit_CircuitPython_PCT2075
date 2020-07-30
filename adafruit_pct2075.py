@@ -23,7 +23,8 @@
 `adafruit_pct2075`
 ================================================================================
 
-CircuitPython library for the NXP PCT2075 Digital Temperature Sensor
+CircuitPython library for the NXP PCT2075 and Microchip TC74 Digital
+Temperature Sensors
 
 * Author(s): Bryan Siepert
 
@@ -33,6 +34,7 @@ Implementation Notes
 **Hardware:**
 
 * Adafruit PCT2075 Breakout: https://www.adafruit.com/products/4369
+* Adafruit TC74: https://www.adafruit.com/product/4375
 
 **Software and Dependencies:**
 
@@ -51,14 +53,17 @@ __version__ = "0.0.0-auto.0"
 __repo__ = "https://github.com/adafruit/Adafruit_CircuitPython_PCT2075.git"
 # pylint: disable=bad-whitespace, too-few-public-methods
 PCT2075_DEFAULT_ADDRESS = 0x37  # Address is configured with pins A0-A2
-TC74_TO220_DEFAULT_ADDRESS = 0x48
 
-REGISTER_TEMPERATURE = 0  # Temperature register (read-only)
-REGISTER_CONFIG = 1  # Configuration register
-
+PCT2075_REGISTER_TEMP = 0  # Temperature register (read-only)
+PCT2075_REGISTER_CONFIG = 1  # Configuration register
 PCT2075_REGISTER_THYST = 2  # Hysterisis register
 PCT2075_REGISTER_TOS = 3  # OS register
 PCT2075_REGISTER_TIDLE = 4  # Measurement idle time register
+
+TC74_DEFAULT_ADDRESS = 0x48
+
+TC74_REGISTER_TEMP = 0  # Temperature register (read-only)
+TC74_REGISTER_CONFIG = 1  # Configuration register
 
 
 class Mode:
@@ -80,42 +85,19 @@ class FaultCount:
 # pylint: enable=bad-whitespace, too-few-public-methods
 
 
-class _AbstractSensor:
-    """Generalized temperature sensor driver superclass.
-        :param ~busio.I2C i2c_bus: The I2C bus the sensor is connected to.
-        :param address: The I2C device address for the sensor.
+class PCT2075:
     """
-
-    def __init__(self, i2c_bus, address, temp_register_format,
-                 temp_right_shift, temp_scale):
-        self.i2c_device = i2cdevice.I2CDevice(i2c_bus, address)
-        self._temperature = ROUnaryStruct(REGISTER_TEMPERATURE, temp_register_format)
-        self._temp_right_shift = temp_right_shift
-        self._temp_scale = temp_scale
-        self.TEMPERATURE_RESOLUTION_IN_C = temp_scale
-
-    shutdown = RWBit(REGISTER_CONFIG, 0, 1)
-    """Set to True to turn off the temperature measurement circuitry in the sensor. While shut down
-    the configurations properties can still be read or written but the temperature will not be
-    measured"""
-
-    @property
-    def temperature(self):
-        """Returns the current temperature in degrees celsius."""
-        return (self._temperature >> self._temp_right_shift) * self._temp_scale
-
-
-class PCT2075(_AbstractSensor):
-    """Driver for the PCT2075 Digital Temperature Sensor and Thermal Watchdog.
-        :param ~busio.I2C i2c_bus: The I2C bus the PCT2075 is connected to.
-        :param address: The I2C device address for the sensor. Default is ``0x37``.
+    Driver for the PCT2075 Digital Temperature Sensor and Thermal
+    Watchdog.
+    :param ~busio.I2C i2c_bus: The I2C bus the PCT2075 is connected to.
+    :param address: The I2C device address for the sensor. Default is
+    ``0x37``.
     """
     def __init__(self, i2c_bus, address=PCT2075_DEFAULT_ADDRESS):
-        super().__init__(i2c_bus, address, ">h", 5, 0.125)
+        self.i2c_device = i2cdevice.I2CDevice(i2c_bus, address)
 
-    _high_temperature_threshold = UnaryStruct(PCT2075_REGISTER_TOS, ">h")
-
-    mode = RWBit(REGISTER_CONFIG, 1, register_width=1)
+    _temperature = ROUnaryStruct(PCT2075_REGISTER_TEMP, ">h")
+    mode = RWBit(PCT2075_REGISTER_CONFIG, 1, register_width=1, lsb_first=False)
     """Sets the alert mode. In comparator mode, the sensor acts like a
     thermostat and will activate the INT pin according to
     `high_temp_active_high` when an alert is triggered. The INT pin will
@@ -125,18 +107,33 @@ class PCT2075(_AbstractSensor):
     temperature falls below `temperature_hysteresis`. In interrupt
     mode, the alert is cleared by reading a property"""
 
-    _fault_queue_length = RWBits(2, REGISTER_CONFIG, 3, register_width=1)
-    _idle_time = RWBits(5, PCT2075_REGISTER_TIDLE, 0, register_width=1)
-
+    shutdown = RWBit(PCT2075_REGISTER_CONFIG, 0, 1, lsb_first=False)
+    """Set to True to turn off the temperature measurement circuitry in
+    the sensor. While shut down the configurations properties can still
+    be read or written but the temperature will not be measured"""
+    _fault_queue_length = RWBits(2, PCT2075_REGISTER_CONFIG, 3, register_width=1, lsb_first=False)
+    _high_temperature_threshold = UnaryStruct(PCT2075_REGISTER_TOS, ">h")
     _temp_hysteresis = UnaryStruct(PCT2075_REGISTER_THYST, ">h")
-    high_temp_active_high = RWBit(REGISTER_CONFIG, 2, register_width=1)
-    """Sets the alert polarity. When False the INT pin will be tied to ground when an alert is
-    triggered. If set to True it will be disconnected from ground when an alert is triggered."""
+    _idle_time = RWBits(5, PCT2075_REGISTER_TIDLE, 0, register_width=1, lsb_first=False)
+    high_temp_active_high = RWBit(PCT2075_REGISTER_CONFIG, 2, register_width=1, lsb_first=False)
+    """Sets the alert polarity. When False the INT pin will be tied to
+    ground when an alert is triggered. If set to True it will be
+    disconnected from ground when an alert is triggered."""
+
+    @property
+    def temperature(self):
+        """
+        Returns the current temperature in degrees celsius. Resolution
+        is 0.125 degrees C.
+        """
+        return (self._temperature >> 5) * 0.125
 
     @property
     def high_temperature_threshold(self):
-        """The temperature in degrees celsius that will trigger an alert on the INT pin if it is
-        exceeded. Resolution is 0.5 degrees C."""
+        """
+        The temperature in degrees celsius that will trigger an alert on
+        the INT pin if it is exceeded. Resolution is 0.5 degrees C.
+        """
         return (self._high_temperature_threshold >> 7) * 0.5
 
     @high_temperature_threshold.setter
@@ -145,9 +142,11 @@ class PCT2075(_AbstractSensor):
 
     @property
     def temperature_hysteresis(self):
-        """The temperature hysteresis value defines the bottom of the temperature range in degrees
-        C in which the temperature is still considered high". `temperature_hysteresis` must be
-        lower than `high_temperature_threshold`. Resolution is 0.5 degrees C.
+        """
+        The temperature hysteresis value defines the bottom of the
+        temperature range in degrees C in which the temperature is still
+        considered high". `temperature_hysteresis` must be lower than
+        `high_temperature_threshold`. Resolution is 0.5 degrees C.
         """
         return (self._temp_hysteresis >> 7) * 0.5
 
@@ -161,10 +160,12 @@ class PCT2075(_AbstractSensor):
 
     @property
     def faults_to_alert(self):
-        """The number of consecutive high temperature faults required to raise an alert. An fault
-        is tripped each time the sensor measures the temperature to be greater than
-        `high_temperature_threshold`. The rate at which the sensor measures the temperature
-        is defined by `delay_between_measurements`.
+        """
+        The number of consecutive high temperature faults required to
+        raise an alert. A fault is tripped each time the sensor measures
+        the temperature to be greater than `high_temperature_threshold`.
+        The rate at which the sensor measures the temperature is defined
+        by `delay_between_measurements`.
         """
         return self._fault_queue_length
 
@@ -176,8 +177,11 @@ class PCT2075(_AbstractSensor):
 
     @property
     def delay_between_measurements(self):
-        """The amount of time between measurements made by the sensor in milliseconds. The value
-        must be between 100 and 3100 and a multiple of 100"""
+        """
+        The amount of time between measurements made by the sensor in
+        milliseconds. The value must be between 100 and 3100 and a
+        multiple of 100.
+        """
         return self._idle_time * 100
 
     @delay_between_measurements.setter
@@ -190,15 +194,28 @@ class PCT2075(_AbstractSensor):
         self._idle_time = int(value / 100)
 
 
-class TC74(_AbstractSensor):
-    """Driver for the TC74 Digital Temperature Sensor.
-        :param ~busio.I2C i2c_bus: The I2C bus the TC74 is connected to.
-        :param address: The I2C device address for the sensor. Default is ``0x48``.
+class TC74:
     """
-    def __init__(self, i2c_bus, address=PCT2075_DEFAULT_ADDRESS):
-        super().__init__(i2c_bus, address, ">h", 0, 1)
+    Driver for the Microchip TC74 Digital Temperature Sensor.
+    :param ~busio.I2C i2c_bus: The I2C bus the TC74 is connected to.
+    :param address: The I2C device address for the sensor. Default is
+    ``0x48``.
+    """
+    def __init__(self, i2c_bus, address=TC74_DEFAULT_ADDRESS):
+        self.i2c_device = i2cdevice.I2CDevice(i2c_bus, address)
 
-    data_ready = ROBit(REGISTER_CONFIG, 0, 1)
-    """Set to True to turn off the temperature measurement circuitry in the sensor. While shut down
-    the configurations properties can still be read or written but the temperature will not be
-    measured"""
+    shutdown = RWBit(TC74_REGISTER_CONFIG, 0, 1, lsb_first=False)
+    data_ready = ROBit(TC74_REGISTER_CONFIG, 1, 1, lsb_first=False)
+    """Set to True to turn off the temperature measurement circuitry in
+    the sensor. While shut down the configurations properties can still
+    be read or written but the temperature will not be measured."""
+
+    _temperature = ROUnaryStruct(TC74_REGISTER_TEMP, "b")
+
+    @property
+    def temperature(self):
+        """
+        Returns the current temperature in degrees celsius. Resolution
+        is 1 degrees C.
+        """
+        return self._temperature
