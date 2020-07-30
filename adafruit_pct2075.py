@@ -64,6 +64,8 @@ TC74_DEFAULT_ADDRESS = 0x48
 
 TC74_REGISTER_TEMP = 0  # Temperature register (read-only)
 TC74_REGISTER_CONFIG = 1  # Configuration register
+TC74_SHUTDOWN_BIT = 7  # Shutdown bit in Configuration register
+TC74_DATA_READY_BIT = 6  # Data Ready bit in Configuration register
 
 
 class Mode:
@@ -206,12 +208,12 @@ class TC74:
 
     _temperature = ROUnaryStruct(TC74_REGISTER_TEMP, "b")
 
-    shutdown = RWBit(TC74_REGISTER_CONFIG, 7, lsb_first=True)
+    shutdown = RWBit(TC74_REGISTER_CONFIG, TC74_SHUTDOWN_BIT, lsb_first=True)
     """Set to True to turn off the temperature measurement circuitry in
     the sensor. While shut down the configurations properties can still
     be read or written but the temperature will not be measured."""
 
-    data_ready = ROBit(TC74_REGISTER_CONFIG, 6, lsb_first=True)
+    data_ready = ROBit(TC74_REGISTER_CONFIG, TC74_DATA_READY_BIT, lsb_first=True)
     """Read-only bit that indicates when the temperature register is
     ready to be read from, especially after power-on or when switching
     from the shutdown to the normal state."""
