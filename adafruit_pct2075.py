@@ -204,13 +204,13 @@ class TC74:
     def __init__(self, i2c_bus, address=TC74_DEFAULT_ADDRESS):
         self.i2c_device = i2cdevice.I2CDevice(i2c_bus, address)
 
+    _temperature = ROUnaryStruct(TC74_REGISTER_TEMP, "b")
+
     shutdown = RWBit(TC74_REGISTER_CONFIG, 0, 1, lsb_first=False)
     data_ready = ROBit(TC74_REGISTER_CONFIG, 1, 1, lsb_first=False)
     """Set to True to turn off the temperature measurement circuitry in
     the sensor. While shut down the configurations properties can still
     be read or written but the temperature will not be measured."""
-
-    _temperature = ROUnaryStruct(TC74_REGISTER_TEMP, "b")
 
     @property
     def temperature(self):
